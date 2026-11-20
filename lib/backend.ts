@@ -9,6 +9,8 @@ import { detectExceptions, type Entry, type Plan, type Schedule } from "./schedu
 import type { AdjustmentInput, AdjustmentResult, EditableShift, ShiftAdjustment } from "./adjustments";
 import type { BatchEmployee, ImportResult } from "./personnel-import";
 import type { QrChannel, QrContact } from "./qr";
+import { calculateOvertime, overtimeRange } from "./overtime";
+import type { CompanySettings, CompanyUpdate, Weekday } from "./company";
 
 const url = process.env.SUPABASE_URL;
 const key = process.env.SUPABASE_PUBLISHABLE_KEY;
@@ -67,6 +69,41 @@ export async function actor(access: "admin" | "operations"): Promise<Actor | nul
   return allowed ? account : null;
 }
 
+export const companySettings = cache(async (): Promise<CompanySettings | null> => {
+  if (demo && sampleBackend) return (await sampleBackend()).demoCompanySettings();
+  const client = await supabase();
+  if (!client) return null;
+  const { data, error } = await client.rpc("attendance_company_settings").maybeSingle<CompanySettings>();
+  if (error && error.code !== "PGRST202" && error.code !== "42883") throw error;
+  return data;
+});
+
+export async function saveCompanySettings(update: CompanyUpdate) {
+  if (demo && sampleBackend) return (await sampleBackend()).demoSaveCompanySettings(update);
+  const client = await supabase();
+  if (!client) return false;
+  const { data, error } = await client.rpc("attendance_save_company_settings", {
+    p_name: update.name, p_workweek: update.weekStart, p_logo_change: update.logoChange,
+    p_logo: update.logoChange === "replace" ? update.logo : null,
+  });
+  if (error) throw error;
+  return data === true;
+}
+
+export async function companyLogo(revision: string, kiosk: boolean): Promise<string | null> {
+  if (demo && sampleBackend) return (await sampleBackend()).demoCompanyLogo(revision);
+  if (kiosk) {
+    const client = kioskClient();
+    if (!client) return null;
+    const { data, error } = await client.rpc("attendance_public_company_logo", { p_token: kioskToken, p_revision: revision });
+    return !error && typeof data === "string" ? data : null;
+  }
+  const client = await supabase();
+  if (!client) return null;
+  const { data, error } = await client.rpc("attendance_company_logo", { p_revision: revision });
+  return !error && typeof data === "string" ? data : null;
+}
+
 export async function employees(): Promise<DirectoryEmployee[]> {
   if (demo && sampleBackend) return (await sampleBackend()).demoEmployees();
   const client = (await supabase())!;
@@ -106,11 +143,16 @@ function kioskClient() {
 }
 
 export async function publicKiosk(): Promise<Kiosk | null> {
-  if (demo) return demoKiosk;
+  if (demo && sampleBackend) {
+    const company = (await sampleBackend()).demoCompanySettings();
+    return { ...demoKiosk, name: company.name, logo_revision: company.logo_revision };
+  }
   const client = kioskClient();
   if (!client) return null;
-  const { data, error } = await client.rpc("attendance_public_kiosk", { p_token: kioskToken }).maybeSingle<Kiosk>();
-  return error ? null : data;
+  const result = await client.rpc("attendance_public_company", { p_token: kioskToken }).maybeSingle<Kiosk>();
+  if (result.error?.code !== "PGRST202" && result.error?.code !== "42883") return result.error ? null : result.data;
+  const legacy = await client.rpc("attendance_public_kiosk", { p_token: kioskToken }).maybeSingle<Kiosk>();
+  return legacy.error ? null : legacy.data;
 }
 
 export async function punch(input: Punch): Promise<{ status: string; name?: string; marked_at?: string; timezone?: string }> {
@@ -183,6 +225,12 @@ export async function report(from: string, to: string): Promise<Shift[]> {
   const client = (await supabase())!;
   return collect<Shift>((first, last) => client.rpc("attendance_report", { p_from: from, p_to: to })
     .order("entered_at", { ascending: false }).order("id").range(first, last));
+}
+
+export async function overtimeForCut(cut: { from: string; to: string }, timezone: string, weekStart: Weekday) {
+  const context = overtimeRange(cut, weekStart);
+  const [assigned, shifts] = await Promise.all([plans(), report(context.from, context.to)]);
+  return calculateOvertime(cut, timezone, assigned, shifts, weekStart);
 }
 
 export async function editableShift(id: string): Promise<EditableShift | null> {

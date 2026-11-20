@@ -8,6 +8,7 @@ import type { BatchEmployee, ImportResult } from "./personnel-import";
 import type { Entry, Plan, Schedule } from "./schedules";
 import type { AdjustmentInput, AdjustmentResult, EditableShift, ShiftAdjustment } from "./adjustments";
 import { addDays, localDate } from "./periods";
+import { defaultWeekStart, type CompanySettings, type CompanyUpdate } from "./company";
 
 const demoZone = "America/Mexico_City";
 
@@ -47,6 +48,10 @@ function database() {
     );
     CREATE TABLE IF NOT EXISTS employee_schedules (
       employee TEXT REFERENCES employees(id), starts_on TEXT, tolerance INTEGER, week TEXT, PRIMARY KEY(employee, starts_on)
+    );
+    CREATE TABLE IF NOT EXISTS company_settings (
+      id INTEGER PRIMARY KEY CHECK (id = 1), name TEXT NOT NULL, workweek_start INTEGER NOT NULL,
+      logo TEXT, logo_revision TEXT
     );
     CREATE TRIGGER IF NOT EXISTS record_hire AFTER INSERT ON employees BEGIN
       INSERT INTO employee_status_days VALUES (new.id, date('now', '-6 hours'), new.active);
@@ -100,6 +105,31 @@ export function demoEmployees(): DirectoryEmployee[] {
   const query = db.prepare("SELECT id, code, name, active, hash IS NOT NULL AS pin_configured FROM employees ORDER BY name");
   return (query.all() as unknown as (Omit<Employee, "active"> & { active: number; pin_configured: number })[])
     .map((row) => ({ ...row, active: Boolean(row.active), pin_configured: Boolean(row.pin_configured) }));
+}
+
+export function demoCompanySettings(): CompanySettings {
+  using db = database();
+  const settings = db.prepare("SELECT name, workweek_start, logo_revision FROM company_settings WHERE id = 1").get();
+  return settings ? { ...(settings as Omit<CompanySettings, "settings_saved">), settings_saved: true }
+    : { name: "Sucursal Centro (demo)", workweek_start: defaultWeekStart, logo_revision: null, settings_saved: false };
+}
+
+export function demoSaveCompanySettings(update: CompanyUpdate) {
+  using db = database();
+  const replace = update.logoChange === "replace";
+  const { changes } = db.prepare(`INSERT INTO company_settings VALUES (1, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET name = excluded.name, workweek_start = excluded.workweek_start,
+      logo = CASE WHEN ? THEN company_settings.logo ELSE excluded.logo END,
+      logo_revision = CASE WHEN ? THEN company_settings.logo_revision ELSE excluded.logo_revision END`)
+    .run(update.name, update.weekStart, replace ? update.logo : null, replace ? randomUUID() : null,
+      Number(update.logoChange === "keep"), Number(update.logoChange === "keep"));
+  return changes === 1;
+}
+
+export function demoCompanyLogo(revision: string) {
+  using db = database();
+  const row = db.prepare("SELECT logo FROM company_settings WHERE logo_revision = ?").get(revision);
+  return typeof row?.logo === "string" ? row.logo : null;
 }
 
 export function demoImportPersonnel(from: string, rows: BatchEmployee[]): ImportResult {

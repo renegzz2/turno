@@ -1,7 +1,7 @@
 export type PanelRole = "admin" | "leader";
 export type Role = PanelRole | "kiosk";
 export type Actor = { id: string; email: string | null; name: string; timezone: string; role: Role };
-export type Kiosk = Pick<Actor, "name" | "timezone">;
+export type Kiosk = Pick<Actor, "name" | "timezone"> & { logo_revision?: string | null };
 export type PanelUser = { id: string; email: string; role: PanelRole };
 export const roleNames: Record<Role, string> = { admin: "Administrador", leader: "Líder", kiosk: "Checador" };
 

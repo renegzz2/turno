@@ -35,6 +35,7 @@ Las dos cuentas del panel usan `Turno-Demo-2026!`. Desde el panel, **Cerrar sesi
    9. [PIN opcional en la carga de personal](supabase/migrations/202611190009_personnel_import_pin.sql)
    10. [Actualización de personal por número de empleado](supabase/migrations/202611190010_update_personnel_import.sql)
    11. [QR dinámico por turno](supabase/migrations/202611190011_dynamic_qr.sql)
+   12. [Configuración general de la empresa](supabase/migrations/202611190012_company_settings.sql)
 3. Para iniciar una empresa nueva, crea el primer administrador y la cuenta técnica del checador en **Authentication → Users**, con sus correos confirmados. Copia los UUID de estos usuarios. Si la empresa ya tiene esas cuentas vinculadas, pasa al paso 5.
 4. En el SQL Editor, vincula ambos usuarios con una empresa. Cambia el nombre, la zona horaria (identificador IANA) y los UUID de ejemplo antes de ejecutar:
 
@@ -82,6 +83,7 @@ select nuevo.token as turno_kiosk_token from nuevo cross join guardado;
 | Dar de alta, dar de baja y reactivar trabajadores | Sí | |
 | Restablecer PIN y anular incidencias | Sí | |
 | Configurar el envío de QR por trabajador | Sí | |
+| Editar la configuración general de la empresa | Sí | |
 
 En **Usuarios → Nuevo usuario**, el Administrador registra el correo, el rol y la contraseña inicial. La cuenta puede iniciar sesión de inmediato. Comparte la contraseña inicial por un canal privado. Desde **Cuentas del panel** también puedes cambiar el rol de otras cuentas de tu empresa.
 
@@ -93,7 +95,20 @@ El Administrador y el Líder usan la misma pantalla de acceso. Los trabajadores 
 - **Quincenal** propone del 1 al 15 o del 16 al último día del mes. **Mensual** propone el mes calendario.
 - **Personalizado** admite cualquier par de fechas válidas. Si editas el fin de una propuesta, se convierte en personalizado.
 - Cada corte incluye los dos días seleccionados en la zona horaria de la empresa. Si una jornada cerrada cruza el límite de un corte, conserva las horas originales de checada y suma solo los minutos dentro del corte. Una jornada sin salida aparece en el corte en que empezó y queda sin horas calculadas hasta cerrarse.
-- **Exportar Excel** usa las fechas aplicadas al panel y genera las hojas **Corte**, **Asistencias**, **Incidencias** y **Retardos y faltas**.
+- **Exportar Excel** usa las fechas aplicadas al panel y genera las hojas **Corte**, **Asistencias**, **Horas extra**, **Incidencias** y **Retardos y faltas**.
+
+## Horas extra en México
+
+- El checador guarda la hora real de salida. **Asistencias → Horas extra** y el Excel clasifican las jornadas cerradas en minutos dobles y triples. El excedente del límite semanal del tramo triple se muestra dentro del total de triples y se señala por separado.
+- Turno usa el horario vigente del día de la jornada y la zona horaria de la empresa. Suma todas las jornadas de la semana laboral configurada y presenta los minutos que caen dentro del corte. Las alertas revisan la semana completa. Un turno nocturno se atribuye a su día de inicio para aplicar los límites.
+- El cálculo estima el tiempo trabajado a partir de las checadas. Un descanso sin registrar queda dentro del intervalo de asistencia. Los registros sin horario ordinario aplicable, como un día de descanso programado, se muestran como **Sin clasificar** para revisión. Revisa estas estimaciones antes de liquidar nómina.
+- Los topes se aplican por fecha, incluida la reducción gradual de la jornada ordinaria y el cambio gradual en el tramo de horas extra dobles. [Decreto del 1 de mayo de 2026](https://sidof.segob.gob.mx/notas/docFuente/5786537)
+
+## Configuración general
+
+- En **Configuración**, el Administrador guarda el nombre de la empresa, sube o quita su logo y elige el inicio de la semana laboral. La primera vez que un Administrador inicia sesión antes de guardar estos datos, Turno abre esta sección.
+- El nombre aparece en el panel, el checador y el resumen de Excel. El logo aparece en el panel y el checador. Se admiten imágenes estáticas PNG, JPG o WebP de hasta 512 KB y 4 megapíxeles.
+- El valor inicial de la semana laboral es de lunes a domingo. El día elegido se usa para calcular horas extra en todos los reportes, incluidos los cortes históricos. Las fechas y el tipo de corte de nómina se eligen por separado en **Asistencias**.
 
 ## Bajas e incidencias
 

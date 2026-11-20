@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
-import { actor, exceptionsForCut, incidents, report } from "@/lib/backend";
+import { actor, companySettings, exceptionsForCut, incidents, overtimeForCut, report } from "@/lib/backend";
+import { defaultWeekStart, workweekLabel } from "@/lib/company";
 import { incidentNames } from "@/lib/models";
 import { localDate, periodNames, readCut, stamp } from "@/lib/periods";
 import { exceptionNames } from "@/lib/schedules";
@@ -25,19 +26,33 @@ export async function GET(request: Request) {
   if (!account) return new Response("Inicia sesión como Administrador o Líder.", { status: 401 });
   const cut = readCut(Object.fromEntries(new URL(request.url).searchParams), localDate(new Date(), account.timezone));
   if (!cut) return new Response("Elige fechas válidas.", { status: 400 });
-  const [rows, recorded] = await Promise.all([report(cut.from, cut.to), incidents(cut)]);
+  const settings = await companySettings();
+  const weekStart = settings?.workweek_start ?? defaultWeekStart;
+  const [rows, recorded, overtime] = await Promise.all([
+    report(cut.from, cut.to), incidents(cut), overtimeForCut(cut, account.timezone, weekStart),
+  ]);
   const exceptions = await exceptionsForCut(cut, account.timezone, recorded);
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Turno";
   const summary = workbook.addWorksheet("Corte");
   summary.columns = [{ width: 24 }, { width: 36 }];
   summary.addRows([
-    ["Empresa", account.name], ["Tipo de corte", periodNames[cut.period]], ["Inicio", cut.from],
+    ["Empresa", settings?.name ?? account.name], ["Tipo de corte", periodNames[cut.period]], ["Inicio", cut.from],
     ["Fin", cut.to], ["Zona horaria", account.timezone], ["Jornadas", rows.length], ["Incidencias", recorded.length],
     ["Retardos", exceptions.filter((row) => row.kind === "late").length],
     ["Faltas pendientes", exceptions.filter((row) => row.kind === "absent").length],
+    ["Horas extra dobles", overtime.reduce((sum, row) => sum + row.double, 0) / 1440],
+    ["Horas extra triples", overtime.reduce((sum, row) => sum + row.triple, 0) / 1440],
+    ["Exceso de triples", overtime.reduce((sum, row) => sum + row.excess, 0) / 1440],
+    ["Tiempo sin clasificar", overtime.reduce((sum, row) => sum + row.review, 0) / 1440],
+    ["Semana laboral", workweekLabel(weekStart)],
+    ["Lectura de horas extra", "Estimaciones dentro del corte. Las alertas consideran la semana completa. El exceso de triples ya está incluido en las horas triples."],
   ]);
   summary.getColumn(1).font = { bold: true };
+  for (const row of [10, 11, 12, 13]) summary.getCell(row, 2).numFmt = "[h]:mm:ss";
+  const note = summary.getCell("B15");
+  note.alignment = { wrapText: true, vertical: "top" };
+  summary.getRow(15).height = 55;
 
   const sheets = workbook.addWorksheet("Asistencias", { views: [{ state: "frozen", ySplit: 1 }] });
   sheets.columns = [
@@ -55,6 +70,23 @@ export async function GET(request: Request) {
       row.minutes === null ? null : row.minutes / 1440,
       row.exited_at ? "Completa" : "Sin salida",
     ]);
+  }
+  const extraSheet = workbook.addWorksheet("Horas extra", { views: [{ state: "frozen", ySplit: 1 }] });
+  extraSheet.columns = [
+    { header: "Número de empleado", width: 24 }, { header: "Trabajador", width: 32 },
+    { header: "Inicio de semana", width: 18, style: { numFmt: "dd/mm/yyyy" } },
+    { header: "Fin de semana", width: 18, style: { numFmt: "dd/mm/yyyy" } },
+    { header: "Dobles del corte", width: 20, style: { numFmt: "[h]:mm:ss" } },
+    { header: "Triples del corte", width: 20, style: { numFmt: "[h]:mm:ss" } },
+    { header: "Exceso de triples", width: 21, style: { numFmt: "[h]:mm:ss" } },
+    { header: "Tiempo sin clasificar", width: 24, style: { numFmt: "[h]:mm:ss" } },
+    { header: "Alertas de la semana completa", width: 55, style: { alignment: { wrapText: true, vertical: "top" } } },
+  ];
+  formatTable(extraSheet, "A1:I1");
+  for (const row of overtime) {
+    const line = extraSheet.addRow([row.code, row.name, new Date(`${row.weekStart}T00:00:00Z`), new Date(`${row.weekEnd}T00:00:00Z`),
+      row.double / 1440, row.triple / 1440, row.excess / 1440, row.review / 1440, row.alerts.join("\n")]);
+    if (row.alerts.length) line.height = 16 * row.alerts.length;
   }
   const incidentSheet = workbook.addWorksheet("Incidencias", { views: [{ state: "frozen", ySplit: 1 }] });
   incidentSheet.columns = [

@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { redirect, RedirectType } from "next/navigation";
-import { actor, clearPanelSession, demo, demoAccounts, demoSessionCookie, supabase } from "@/lib/backend";
+import { actor, clearPanelSession, companySettings, demo, demoAccounts, demoSessionCookie, supabase } from "@/lib/backend";
 import { isOperationsRole, type Actor, type Result } from "@/lib/models";
 import { changePanelRole, provisionPanelUser } from "@/lib/panel-users";
 
@@ -16,6 +16,7 @@ export async function signIn(_: Result, form: FormData): Promise<Result> {
   const password = String(form.get("password") ?? "");
   const wrongRole = { ok: false, message: "El panel requiere una cuenta de Administrador o Líder." };
   if (!validEmail(email) || !password || password.length > 1024) return badLogin;
+  let role: Actor["role"];
 
   if (demo && demoAccounts) {
     const local = await demoAccounts();
@@ -29,6 +30,7 @@ export async function signIn(_: Result, form: FormData): Promise<Result> {
     const previous = jar.get(demoSessionCookie)?.value;
     if (previous) local.demoSignOut(previous);
     jar.set(demoSessionCookie, session.token, { httpOnly: true, sameSite: "lax", path: "/", maxAge: local.sessionHours * 3600 });
+    role = session.role;
   } else {
     const client = await supabase();
     if (!client) return { ok: false, message: "Configura la conexión de Supabase para iniciar sesión." };
@@ -39,8 +41,10 @@ export async function signIn(_: Result, form: FormData): Promise<Result> {
       await clearPanelSession();
       return wrongRole;
     }
+    role = data.role;
   }
-  redirect("/asistencias", RedirectType.replace);
+  const settings = role === "admin" ? await companySettings().catch(() => null) : null;
+  redirect(settings?.settings_saved === false ? "/configuracion" : "/asistencias", RedirectType.replace);
 }
 
 export async function signOut() {

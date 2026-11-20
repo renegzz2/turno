@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
 import { CalendarDays, CalendarPlus, Clock3, Download, Hourglass, Monitor, Plus, UsersRound } from "lucide-react";
 import Link from "next/link";
-import { actor, exceptionsForCut, incidents, report } from "@/lib/backend";
+import { actor, companySettings, exceptionsForCut, incidents, overtimeForCut, report } from "@/lib/backend";
+import { defaultWeekStart, workweekLabel } from "@/lib/company";
 import { Shell } from "@/components/shell";
 import { CutPicker } from "@/components/cut-picker";
 import { IncidentTable } from "@/components/incident-table";
@@ -11,13 +12,17 @@ import { formatDate, localDate, readCut, stamp, type Query } from "@/lib/periods
 export const dynamic = "force-dynamic";
 
 const hours = (minutes: number) => `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+const overtimeHours = (minutes: number) => minutes > 0 && minutes < 1 ? "< 1 min" : hours(Math.floor(minutes));
 
 export default async function Dashboard({ searchParams }: { searchParams: Promise<Query> }) {
   const account = await actor("operations");
   if (!account) redirect("/acceso");
   const today = localDate(new Date(), account.timezone);
   const cut = readCut(await searchParams, today);
-  const [rows, recorded] = cut ? await Promise.all([report(cut.from, cut.to), incidents(cut)]) : [[], []];
+  const weekStart = (await companySettings())?.workweek_start ?? defaultWeekStart;
+  const [rows, recorded, overtime] = cut ? await Promise.all([
+    report(cut.from, cut.to), incidents(cut), overtimeForCut(cut, account.timezone, weekStart),
+  ]) : [[], [], []];
   const exceptions = cut ? await exceptionsForCut(cut, account.timezone, recorded) : [];
   const count = new Set(rows.map((row) => row.code)).size;
   const total = rows.reduce((sum, row) => sum + (row.minutes ?? 0), 0);
@@ -63,6 +68,21 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           })}</tbody>
         </table></div> : <div className="empty"><CalendarDays size={25}/><strong>Sin asistencias en este corte</strong><p>Prueba con otro rango de fechas o registra una checada.</p></div>}
         <div className="records-footer"><span>{rows.length} {rows.length === 1 ? "jornada" : "jornadas"}</span><span>Zona horaria · {account.timezone}</span></div>
+      </section>
+      <section className="card register-card cut-incidents" aria-labelledby="overtime-title">
+        <div className="records-heading"><div><h2 id="overtime-title">Horas extra</h2>
+          <p>Horas del corte. Semana laboral para las alertas · {workweekLabel(weekStart)}.</p></div></div>
+        {overtime.length ? <div className="table-scroll"><table>
+          <thead><tr><th>Trabajador</th><th>Semana laboral</th><th>Dobles</th><th>Triples</th><th>Exceso de triples</th><th>Sin clasificar</th><th>Alertas de la semana</th></tr></thead>
+          <tbody>{overtime.map((row) => <tr key={`${row.code}/${row.weekStart}`}>
+            <td><strong>{row.name}</strong><small>Empleado {row.code}</small></td>
+            <td>{formatDate(row.weekStart)}<small>al {formatDate(row.weekEnd)}</small></td>
+            <td>{overtimeHours(row.double)}</td><td>{overtimeHours(row.triple)}</td>
+            <td>{overtimeHours(row.excess)}</td><td>{overtimeHours(row.review)}</td>
+            <td>{row.alerts.length ? <ul className="overtime-alerts">{row.alerts.map((alert) => <li key={alert}>{alert}</li>)}</ul> : "—"}</td>
+          </tr>)}</tbody>
+        </table></div> : <div className="empty"><Clock3 size={25}/><strong>Sin horas extra ni alertas para este corte</strong></div>}
+        <div className="records-footer"><span>Estimación según horario y checadas cerradas. El exceso de triples ya está incluido en las horas triples.</span></div>
       </section>
       <ExceptionTable rows={exceptions}/>
       <section className="card register-card cut-incidents" aria-labelledby="cut-incidents-title">
